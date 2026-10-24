@@ -1,0 +1,56 @@
+name: Sync from upstream
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout mirror repo
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN }}
+
+      - name: Sync all branches and tags from frenzymath/reap
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream https://github.com/frenzymath/reap.git
+          git fetch upstream --prune --tags
+          git fetch origin
+
+          PUSH_URL="https://x-access-token:${SYNC_TOKEN}@github.com/IQuestLab/reap.git"
+
+          for branch in $(git branch -r | grep 'upstream/' | grep -v 'HEAD' | sed 's|^[[:space:]]*upstream/||'); do
+            echo "==== Syncing branch: $branch ===="
+            git checkout -B "$branch" "upstream/$branch"
+
+            if [ "$branch" = "main" ]; then
+              if git show origin/main:.github/workflows/sync-upstream.yml > /tmp/sync-upstream.yml 2>/dev/null; then
+                mkdir -p .github/workflows
+                cp /tmp/sync-upstream.yml .github/workflows/sync-upstream.yml
+                git add .github/workflows/sync-upstream.yml
+                git diff --cached --quiet || git commit -m "chore: keep sync workflow"
+              fi
+            fi
+
+            # 镜像仓用 force push，不用 force-with-lease
+            git push "$PUSH_URL" "$branch" --force
+          done
+
+          git push "$PUSH_URL" --tags --force
+
+          echo "==== Sync completed ===="
